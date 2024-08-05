@@ -20,3 +20,6 @@ python polish/make_img_pairs.py -k ./psf/dsa-2000-fullband-psf.fits -o ./data/DS
 
 An LWA example:
 python polish/make_img_pairs.py -k ./psf/lwa.briggs0-psf.fits -o ./data/exampleLWA1024x2/ --nside 2048 -r 2 -s 2048 -p --pix 60.0 --src_density 2
+
+### Train a POLISH model on simulated data:
+
