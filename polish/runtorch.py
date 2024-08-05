@@ -85,8 +85,11 @@ class WDSRpsf(nn.Module):
         self.psf_conv = nn.Conv2d(1, 1, kernel_size=3, padding=1, bias=False)
         
     def forward(self, x, psf):
-        # Combine input image and PSF
-        x = torch.cat([x, psf], dim=1)
+        # Resize PSF to match input image dimensions
+        psf_resized = F.interpolate(psf, size=x.shape[2:], mode='nearest')
+        
+        # Combine input image and resized PSF
+        x = torch.cat([x, psf_resized], dim=1)
         
         x = self.conv_first(x)
         residual = x
@@ -97,7 +100,10 @@ class WDSRpsf(nn.Module):
         x = self.conv_last(x)
         
         # Apply PSF convolution
-        self.psf_conv.weight.data = psf.unsqueeze(0).unsqueeze(0)
+        # Ensure PSF is the right size for convolution
+        if psf.shape[2:] != (3, 3):
+            psf = F.interpolate(psf, size=(3, 3), mode='bilinear', align_corners=False)
+        self.psf_conv.weight.data = psf.squeeze(0)
         x = self.psf_conv(x)
         
         return x
