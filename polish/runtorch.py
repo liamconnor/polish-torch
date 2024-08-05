@@ -69,7 +69,7 @@ class WDSRpsf(nn.Module):
         
         # Residual blocks
         self.residual_blocks = nn.ModuleList([
-            WDSRBlockpsf(num_features) for _ in range(num_residual_blocks)
+            WDSRBlock(num_features) for _ in range(num_residual_blocks)
         ])
         
         # Upsampling
@@ -81,12 +81,12 @@ class WDSRpsf(nn.Module):
         # Final convolution
         self.conv_last = nn.Conv2d(num_features, 1, kernel_size=3, padding=1)
         
-        # PSF convolution layer
+        # PSF convolution layer (now 2D)
         self.psf_conv = nn.Conv2d(1, 1, kernel_size=3, padding=1, bias=False)
         
     def forward(self, x, psf):
         # Resize PSF to match input image dimensions
-        psf_resized = F.interpolate(psf, size=x.shape[2:], mode='nearest')
+        psf_resized = F.interpolate(psf, size=x.shape[2:], mode='bilinear', align_corners=False)
         
         # Combine input image and resized PSF
         x = torch.cat([x, psf_resized], dim=1)
@@ -108,9 +108,9 @@ class WDSRpsf(nn.Module):
         
         return x
 
-class WDSRBlockpsf(nn.Module):
+class WDSRBlock(nn.Module):
     def __init__(self, num_features):
-        super(WDSRBlockpsf, self).__init__()
+        super(WDSRBlock, self).__init__()
         self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
         self.act = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
@@ -122,7 +122,7 @@ class WDSRBlockpsf(nn.Module):
         x = self.conv2(x)
         x += residual
         return x
-
+        
 class SuperResolutionDataset(Dataset):
     def __init__(self, hr_dir, lr_dir, start_num, end_num,
                  crop_size=256, transform=None, scale_factor=2):
