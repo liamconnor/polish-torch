@@ -69,20 +69,18 @@ class WDSRpsf(nn.Module):
         
         # Residual blocks
         self.residual_blocks = nn.ModuleList([
-            WDSRBlock(num_features) for _ in range(num_residual_blocks)
+            WDSRBlockpsf(num_features) for _ in range(num_residual_blocks)
         ])
         
         # Upsampling
         self.upsample = nn.Sequential(
-            nn.Conv2d(num_features, num_features * (scale_factor ** 2), kernel_size=3, padding=1),
+            nn.Conv2d(num_features, num_features * (scale_factor ** 2), 
+            kernel_size=3, padding=1),
             nn.PixelShuffle(scale_factor)
         )
         
         # Final convolution
         self.conv_last = nn.Conv2d(num_features, 1, kernel_size=3, padding=1)
-        
-        # PSF convolution layer (now 2D)
-        self.psf_conv = nn.Conv2d(1, 1, kernel_size=3, padding=1, bias=False)
         
     def forward(self, x, psf):
         # Resize PSF to match input image dimensions
@@ -100,17 +98,17 @@ class WDSRpsf(nn.Module):
         x = self.conv_last(x)
         
         # Apply PSF convolution
-        # Ensure PSF is the right size for convolution
         if psf.shape[2:] != (3, 3):
             psf = F.interpolate(psf, size=(3, 3), mode='bilinear', align_corners=False)
-        self.psf_conv.weight.data = psf.squeeze(0)
-        x = self.psf_conv(x)
+        psf = psf.squeeze(0).squeeze(0)  # Remove batch and channel dimensions
+        psf = psf.unsqueeze(0).unsqueeze(0)  # Add output and input channel dimensions
+        x = F.conv2d(x, psf, padding=1)
         
         return x
 
-class WDSRBlock(nn.Module):
+class WDSRBlockpsf(nn.Module):
     def __init__(self, num_features):
-        super(WDSRBlock, self).__init__()
+        super(WDSRBlockpsf, self).__init__()
         self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
         self.act = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
