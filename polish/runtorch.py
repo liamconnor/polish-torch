@@ -61,7 +61,7 @@ class WDSRBlock(nn.Module):
 
 class WDSRpsf(nn.Module):
     def __init__(self, num_residual_blocks=32, num_features=32, scale_factor=2):
-        super(WDSR, self).__init__()
+        super(WDSRpsf, self).__init__()
         self.scale_factor = scale_factor
         
         # Initial convolution (now accepts 2 channels: image and PSF)
@@ -69,7 +69,7 @@ class WDSRpsf(nn.Module):
         
         # Residual blocks
         self.residual_blocks = nn.ModuleList([
-            WDSRBlock(num_features) for _ in range(num_residual_blocks)
+            WDSRBlockpsf(num_features) for _ in range(num_residual_blocks)
         ])
         
         # Upsampling
@@ -104,7 +104,7 @@ class WDSRpsf(nn.Module):
 
 class WDSRBlockpsf(nn.Module):
     def __init__(self, num_features):
-        super(WDSRBlock, self).__init__()
+        super(WDSRBlockpsf, self).__init__()
         self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
         self.act = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
