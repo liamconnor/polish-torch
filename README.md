@@ -22,4 +22,9 @@ An LWA example:
 python polish/make_img_pairs.py -k ./psf/lwa.briggs0-psf.fits -o ./data/exampleLWA1024x2/ --nside 2048 -r 2 -s 2048 -p --pix 60.0 --src_density 2
 
 ### Train a POLISH model on simulated data:
+python polish/runtorch.py ./data/DSA2000_1024_x2/ 2
+
+If you'd like to fine tune an existing model (for example, a slightly different pointing and therefore a different but similar PSF):
+
+python polish/runtorch.py ./data/DSA2000_1024_x2/ 2 path_to_model.pth
 
