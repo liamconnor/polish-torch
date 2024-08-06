@@ -1,2 +1,4 @@
 *.npy
+*~
 *.lock
+runs/*.pth

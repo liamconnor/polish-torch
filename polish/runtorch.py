@@ -44,21 +44,6 @@ class WDSR(nn.Module):
         x = self.conv_last(x)
         return x
 
-class WDSRBlock(nn.Module):
-    def __init__(self, num_features):
-        super(WDSRBlock, self).__init__()
-        self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
-        self.act = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
-
-    def forward(self, x):
-        residual = x
-        x = self.conv1(x)
-        x = self.act(x)
-        x = self.conv2(x)
-        x += residual
-        return x
-
 class WDSRpsf(nn.Module):
     def __init__(self, num_residual_blocks=32, num_features=32, scale_factor=2):
         super(WDSRpsf, self).__init__()
@@ -75,12 +60,14 @@ class WDSRpsf(nn.Module):
         # Upsampling
         self.upsample = nn.Sequential(
             nn.Conv2d(num_features, num_features * (scale_factor ** 2), 
-            kernel_size=3, padding=1),
+            kernel_size=3, padding=1, stride=1),
             nn.PixelShuffle(scale_factor)
         )
         
         # Final convolution
-        self.conv_last = nn.Conv2d(num_features, 1, kernel_size=3, padding=1)
+        self.conv_last = nn.Conv2d(num_features, 1, kernel_size=3, stride=1, padding=1)
+        
+        # Remove the psf_conv layer as we'll apply the PSF differently
         
     def forward(self, x, psf):
         # Resize PSF to match input image dimensions
@@ -98,29 +85,21 @@ class WDSRpsf(nn.Module):
         x = self.conv_last(x)
         
         # Apply PSF convolution
+        # Ensure PSF is the right size for convolution
         if psf.shape[2:] != (3, 3):
             psf = F.interpolate(psf, size=(3, 3), mode='bilinear', align_corners=False)
-        psf = psf.squeeze(0).squeeze(0)  # Remove batch and channel dimensions
-        psf = psf.unsqueeze(0).unsqueeze(0)  # Add output and input channel dimensions
-        x = F.conv2d(x, psf, padding=1)
+        
+        # Apply PSF convolution manually for each item in the batch
+        batch_size = x.shape[0]
+        output = []
+        for i in range(batch_size):
+            current_psf = psf[i]
+            output.append(F.conv2d(x[i].unsqueeze(0), current_psf.unsqueeze(0), padding=1, stride=1))
+        
+        x = torch.cat(output, dim=0)
         
         return x
 
-class WDSRBlockpsf(nn.Module):
-    def __init__(self, num_features):
-        super(WDSRBlockpsf, self).__init__()
-        self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
-        self.act = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
-    
-    def forward(self, x):
-        residual = x
-        x = self.conv1(x)
-        x = self.act(x)
-        x = self.conv2(x)
-        x += residual
-        return x
-        
 class SuperResolutionDataset(Dataset):
     def __init__(self, hr_dir, lr_dir, start_num, end_num,
                  crop_size=256, transform=None, scale_factor=2):
@@ -166,14 +145,17 @@ class SuperResolutionDataset(Dataset):
         return lr_image, hr_image
 
 # Training function
-def train(model, train_loader, criterion, optimizer, device):
+def train(model, train_loader, criterion, optimizer, device, psf=None):
     model.train()
     running_loss = 0.0
     for lr_imgs, hr_imgs in train_loader:
         lr_imgs, hr_imgs = lr_imgs.to(device), hr_imgs.to(device)
         
         optimizer.zero_grad()
-        outputs = model(lr_imgs)
+        if psf is None:
+            outputs = model(lr_imgs)
+        else:
+            outputs = model(lr_imgs, psf)
         #print(lr_imgs)
         #print(outputs)
         loss = criterion(outputs, hr_imgs)
@@ -185,13 +167,18 @@ def train(model, train_loader, criterion, optimizer, device):
     return running_loss / len(train_loader)
 
 # Validation function
-def validate(model, val_loader, criterion, device):
+def validate(model, val_loader, criterion, device, psf=None):
     model.eval()
     running_loss = 0.0
     with torch.no_grad():
         for lr_imgs, hr_imgs in val_loader:
             lr_imgs, hr_imgs = lr_imgs.to(device), hr_imgs.to(device)
-            outputs = model(lr_imgs)
+
+            if psf is None:
+                outputs = model(lr_imgs)
+            else:
+                outputs = model(lr_imgs, psf)
+
             loss = criterion(outputs, hr_imgs)
             running_loss += loss.item()
     
@@ -207,16 +194,22 @@ def calculate_psnr(img1, img2):
     return psnr
 
 # Main execution
-def main(datadir, scale=1, model_name=None):
+def main(datadir, scale=2, model_name=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Hyperparameters
-    num_epochs = 10
-    batch_size = 8
+    num_epochs = 500
+    batch_size = 4
     learning_rate = 0.0001
     
     # Create model
-    model = WDSR(scale_factor=scale).to(device)
+#    model = WDSR(scale_factor=scale).to(device)
+    model = WDSRpsf().to(device)
+    psfarr = np.load('./data/exampleLWA1024x2/psf/psf_ideal.npy')
+    psfarr = psfarr[3840//2-32:3840//2+32, 3840//2-32:3840//2+32]
+    psfarr = psfarr[None,None] * np.ones([batch_size,1,1,1])
+    psfarr = torch.from_numpy(psfarr).to(device).float()
+
 
     if model_name != None:
         model.load_state_dict(torch.load(model_name))
@@ -236,8 +229,8 @@ def main(datadir, scale=1, model_name=None):
     best_val_loss = float('inf')
     best_val_psnr = 0.0
     for epoch in range(num_epochs):
-        train_loss = train(model, train_loader, criterion, optimizer, device)
-        val_loss, val_psnr = validate_with_psnr(model, val_loader, criterion, device)
+        train_loss = train(model, train_loader, criterion, optimizer, device, psf=psfarr)
+        val_loss, val_psnr = validate_with_psnr(model, val_loader, criterion, device, psf=psfarr)
         
         print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, Val PSNR: {val_psnr:.2f}")
 
@@ -246,7 +239,6 @@ def main(datadir, scale=1, model_name=None):
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'runs/%s.pth' % datadir.strip('/').split('/')[-1])
 
-            
         if val_psnr > best_val_psnr:
             best_val_psnr = val_psnr
             torch.save(model.state_dict(), 'runs/%s_PSNR.pth' % datadir.strip('/').split('/')[-1])
@@ -255,14 +247,17 @@ def main(datadir, scale=1, model_name=None):
     torch.save(model.state_dict(), 'runs/final_%s.pth' % datadir.strip('/').split('/')[-1])
 
 # Modified validation function to include PSNR calculation
-def validate_with_psnr(model, val_loader, criterion, device):
+def validate_with_psnr(model, val_loader, criterion, device, psf=None):
     model.eval()
     total_loss = 0
     total_psnr = 0
     with torch.no_grad():
         for lr_imgs, hr_imgs in val_loader:
             lr_imgs, hr_imgs = lr_imgs.to(device), hr_imgs.to(device)
-            sr_imgs = model(lr_imgs)
+            if psf is None:
+                sr_imgs = model(lr_imgs)
+            else:
+                sr_imgs = model(lr_imgs, psf)
             loss = criterion(sr_imgs, hr_imgs)
             total_loss += loss.item()
             
@@ -284,7 +279,7 @@ if __name__=='__main__':
     main(sys.argv[1], int(sys.argv[2]), model_name=model_name)
 
 # Inference function (for using the trained model)
-def super_resolve(model, lr_image_path, device):
+def super_resolve(model, lr_image_path, device, psf=None):
     model.eval()
 
     if lr_image_path.endswith('.png'):
@@ -293,12 +288,13 @@ def super_resolve(model, lr_image_path, device):
         lr_image = torch.from_numpy(lr_image).unsqueeze(0).unsqueeze(0).to(device)
     elif lr_image_path.endswith('.npy'):
         lr_image = np.load(lr_image_path)[:,:,0].astype(np.float32)
-        print(lr_image.shape)
         lr_image = torch.from_numpy(lr_image).unsqueeze(0).unsqueeze(0).to(device)
-        print(lr_image.shape)
     
     with torch.no_grad():
-        sr_image = model(lr_image)
+        if psf is None:
+            sr_image = model(lr_image)
+        else:
+            sr_image = model(lr_image, psf)
     
     sr_image = sr_image.squeeze().cpu().numpy()
     sr_image = (sr_image * 65535.0).clip(0, 65535).astype(np.uint16)
