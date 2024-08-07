@@ -222,12 +222,13 @@ def main(datadir, scale=2, model_name=None):
     # Create model
 #    model = WDSR(scale_factor=scale).to(device)
     model = WDSRpsf(scale_factor=scale).to(device)
+
     psfarr = np.load('./data/exampleLWA1024x2/psf/psf_ideal.npy')
     npsf = len(psfarr)
     psfarr = psfarr[npsf//2-256:npsf//2+256, npsf//2-256:npsf//2+256]
-
     psfarr = psfarr[None,None] * np.ones([batch_size,1,1,1])
     psfarr = torch.from_numpy(psfarr).to(device).float()
+
     
     if model_name != None:
         model.load_state_dict(torch.load(model_name))
@@ -312,6 +313,7 @@ def super_resolve(model, lr_image_path, device, psf=None):
         if psf is None:
             sr_image = model(lr_image)
         else:
+            print(lr_image.shape, psf.shape)
             sr_image = model(lr_image, psf)
     
     sr_image = sr_image.squeeze().cpu().numpy()
