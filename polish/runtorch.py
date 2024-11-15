@@ -46,6 +46,21 @@ class WDSR(nn.Module):
         x = self.conv_last(x)
         return x
 
+class WDSRBlock(nn.Module):
+    def __init__(self, num_features):  # Use double underscores for __init__
+        super(WDSRBlock, self).__init__()  # Use double underscores for __init__
+        self.conv1 = nn.Conv2d(num_features, num_features * 4, stride=1, kernel_size=3, padding=1)
+        self.act = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(num_features * 4, num_features, stride=1, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        residual = x
+        x = self.conv1(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        x += residual
+        return x
+
 class WDSRpsf(nn.Module):
     def __init__(self, num_residual_blocks=32, num_features=32, scale_factor=2):
         super(WDSRpsf, self).__init__()
@@ -211,7 +226,7 @@ def calculate_psnr(img1, img2):
     return psnr
 
 # Main execution
-def main(datadir, scale=2, model_name=None):
+def main(datadir, scale=2, model_name=None, psf=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Hyperparameters
@@ -220,14 +235,18 @@ def main(datadir, scale=2, model_name=None):
     learning_rate = 0.0001
     
     # Create model
-#    model = WDSR(scale_factor=scale).to(device)
-    model = WDSRpsf(scale_factor=scale).to(device)
+    if psf:
+        model = WDSRpsf(scale_factor=scale).to(device)
+        psfarr = np.load('./data/exampleLWA1024x2/psf/psf_ideal.npy')
+        npsf = len(psfarr)
+        psfarr = psfarr[npsf//2-256:npsf//2+256, npsf//2-256:npsf//2+256]
+        psfarr = psfarr[None,None] * np.ones([batch_size,1,1,1])
+        psfarr = torch.from_numpy(psfarr).to(device).float()
+    else:
+        model = WDSR(scale_factor=scale).to(device)
+        psfarr = None
 
-    psfarr = np.load('./data/exampleLWA1024x2/psf/psf_ideal.npy')
-    npsf = len(psfarr)
-    psfarr = psfarr[npsf//2-256:npsf//2+256, npsf//2-256:npsf//2+256]
-    psfarr = psfarr[None,None] * np.ones([batch_size,1,1,1])
-    psfarr = torch.from_numpy(psfarr).to(device).float()
+
 
     
     if model_name != None:
