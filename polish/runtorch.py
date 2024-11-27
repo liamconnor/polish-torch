@@ -11,6 +11,14 @@ import numpy as np
 import torchvision.transforms.functional as TF
 import torch.nn.functional as F
 
+from torch.optim.lr_scheduler import (
+        StepLR,
+        ExponentialLR,
+        CosineAnnealingLR,
+        LambdaLR,
+        ReduceLROnPlateau
+    )
+
 import matplotlib.pylab as plt
 
 # WDSR model definition
@@ -134,7 +142,7 @@ class WDSRBlockpsf(nn.Module):
 
 class SuperResolutionDataset(Dataset):
     def __init__(self, hr_dir, lr_dir, start_num, end_num,
-                 crop_size=256, transform=None, scale_factor=2):
+                 crop_size=96, transform=None, scale_factor=2):
         self.hr_dir = hr_dir
         self.lr_dir = lr_dir
         self.transform = transform
@@ -182,14 +190,16 @@ def train(model, train_loader, criterion, optimizer, device, psf=None):
     running_loss = 0.0
     for lr_imgs, hr_imgs in train_loader:
         lr_imgs, hr_imgs = lr_imgs.to(device), hr_imgs.to(device)
+
+#        lr_imgs = torch.log(lr_imgs + 1e-32)
+#        hr_imgs = torch.log(hr_imgs + 1e-32)
         
         optimizer.zero_grad()
         if psf is None:
             outputs = model(lr_imgs)
         else:
             outputs = model(lr_imgs, psf)
-        #print(lr_imgs)
-        #print(outputs)
+
         loss = criterion(outputs, hr_imgs)
         loss.backward()
         optimizer.step()
@@ -205,6 +215,9 @@ def validate(model, val_loader, criterion, device, psf=None):
     with torch.no_grad():
         for lr_imgs, hr_imgs in val_loader:
             lr_imgs, hr_imgs = lr_imgs.to(device), hr_imgs.to(device)
+
+#            lr_imgs = torch.log(lr_imgs + 1e-32)
+#            hr_imgs = torch.log(hr_imgs + 1e-32)
 
             if psf is None:
                 outputs = model(lr_imgs)
@@ -226,11 +239,11 @@ def calculate_psnr(img1, img2):
     return psnr
 
 # Main execution
-def main(datadir, scale=2, model_name=None, psf=False):
+def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Hyperparameters
-    num_epochs = 500
+    num_epochs = 2500
     batch_size = 4
     learning_rate = 0.0001
     
@@ -246,19 +259,19 @@ def main(datadir, scale=2, model_name=None, psf=False):
         model = WDSR(scale_factor=scale).to(device)
         psfarr = None
 
-
-
     
     if model_name != None:
         model.load_state_dict(torch.load(model_name))
     
     # Loss function and optimizer
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    #optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    #step_scheduler = StepLR(optimizer, step_size=250, gamma=0.1)  # Decays by 0.1 every 30 epochs
     
     # Load datasets
-    train_dataset = SuperResolutionDataset('./%s/POLISH_train_HR/' % datadir, './%s/POLISH_train_LR_bicubic/X%d/' % (datadir,scale), 0, 799, scale_factor=scale)
-    val_dataset = SuperResolutionDataset('./%s/POLISH_valid_HR/' % datadir, './%s/POLISH_valid_LR_bicubic/X%d/' % (datadir, scale), 800, 899, scale_factor=scale)
+    train_dataset = SuperResolutionDataset('./%s/POLISH_train_HR/' % datadir, './%s/POLISH_train_LR_bicubic/X%d/' % (datadir,scale), 0, ntrain-1, scale_factor=scale)
+    val_dataset = SuperResolutionDataset('./%s/POLISH_valid_HR/' % datadir, './%s/POLISH_valid_LR_bicubic/X%d/' % (datadir, scale), ntrain, ntrain+nvalid-1, scale_factor=scale)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
@@ -266,6 +279,7 @@ def main(datadir, scale=2, model_name=None, psf=False):
     # Training loop
     best_val_loss = float('inf')
     best_val_psnr = 0.0
+    
     for epoch in range(num_epochs):
         train_loss = train(model, train_loader, criterion, optimizer, device, psf=psfarr)
         val_loss, val_psnr = validate_with_psnr(model, val_loader, criterion, device, psf=psfarr)
@@ -317,7 +331,7 @@ if __name__=='__main__':
     main(sys.argv[1], int(sys.argv[2]), model_name=model_name)
 
 # Inference function (for using the trained model)
-def super_resolve(model, lr_image_path, device, psf=None):
+def super_resolve(model, lr_image_path, device, psf=None, log=False):
     model.eval()
 
     if lr_image_path.endswith('.png'):
@@ -327,7 +341,10 @@ def super_resolve(model, lr_image_path, device, psf=None):
     elif lr_image_path.endswith('.npy'):
         lr_image = np.load(lr_image_path)[:,:,0].astype(np.float32)
         lr_image = torch.from_numpy(lr_image).unsqueeze(0).unsqueeze(0).to(device)
-    
+
+    if log==True:
+        lr_image = torch.log(lr_image+1e-32)
+        
     with torch.no_grad():
         if psf is None:
             sr_image = model(lr_image)

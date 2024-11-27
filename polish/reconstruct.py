@@ -4,6 +4,8 @@ import numpy as np
 from runtorch import WDSR, super_resolve, WDSRpsf
 import torch
 
+import matplotlib.pylab as plt
+
 model_name = sys.argv[1]
 datadir = sys.argv[2]
 mm = sys.argv[3]
@@ -41,3 +43,11 @@ else:
     sr_image = super_resolve(model, filename, 'cuda', psf=psfarr)
 
 np.save('data.npy', np.array(sr_image))
+
+sr_image = np.array(sr_image)
+
+print(sr_image.shape)
+
+fig = plt.figure()
+plt.imshow(sr_image, vmax=sr_image.max()*0.01, vmin=0)
+plt.show()

@@ -146,20 +146,21 @@ def convolvehr(data, kernel, plotit=False,
             data = data.reshape(data.shape[0]//4,4,
                                 data.shape[-2]//4, 4, 
                                 ncolor).mean(1).mean(-2)
-            plt.imshow(dataLR[..., 0], cmap=cmap, 
-                        vmax=dataLR[..., 0].max()*0.10, vmin=0)
+            plt.imshow(dataLR[..., 0]**0.5, cmap=cmap, 
+                        vmax=dataLR[..., 0].max()**0.5*0.010, vmin=0)
         else:
-            plt.imshow(dataLR, vmax=dataLR[..., 0].max()*0.10, cmap=cmap)
+            plt.imshow(dataLR, vmax=dataLR[..., 0].max()*0.0010, cmap=cmap)
         plt.title('Convolved', fontsize=15)
         plt.figure()
 
         if norm is False:
-            plt.imshow(data_noise[..., 0], cmap=cmap, vmax=data_noise.max()*0.05, vmin=0)
+            plt.imshow(data_noise[..., 0], cmap=cmap, vmax=data_noise.max()*0.001, vmin=0)
         else:
-            plt.imshow(data_noise, cmap=cmap,vmax=data_noise.max()*0.05, vmin=0)
+            plt.imshow(data_noise, cmap=cmap,vmax=data_noise.max()*0.001, vmin=0)
+
         plt.title('True', fontsize=15)
         plt.figure()
-        plt.imshow(kernel[...,0],cmap='Greys',vmax=kernel[...,0].max()*0.35)
+        plt.imshow(kernel[...,0],cmap='Greys',vmax=kernel[...,0].max()*0.001)
         plt.title('Kernel / PSF', fontsize=20)
         plt.show()
 
@@ -412,6 +413,7 @@ if __name__=='__main__':
             print("Stretching PSF by %0.3f to match map" % (pixel_scale_psf/PIXEL_SIZE))
             kernel = transform.rescale(kernel, pixel_scale_psf/PIXEL_SIZE)
 
+    print('Kernel size:', kernel.shape)
     # Input directory
     if options.fdirin is None:
         fdirinTRAIN = None
