@@ -23,7 +23,7 @@ def plot_images(lr_image, sr_image, hr_image=None, gamma=0.5):
     extent_sr = [0, lr_image.shape[1], 0, lr_image.shape[0]]  # Use LR dimensions for both
 
     lr_image = lr_image**gamma
-    axes[0].imshow(lr_image, cmap='gray', extent=extent_lr, vmax=lr_image.max()*0.1)
+    axes[0].imshow(np.abs(lr_image)**0.33, cmap='gray', extent=extent_lr, )
     axes[0].set_title('Low-Resolution Image')
     axes[0].axis('off')
 
@@ -69,17 +69,24 @@ def main():
     model.load_state_dict(torch.load(model_name))
     model.eval()
 
-    # Construct the filename for the input low-resolution image
-    filename = f'{datadir}/POLISH_valid_LR_bicubic/X2/0{mm}x2.npy'
-    filename_hr = f'{datadir}/POLISH_valid_HR/0{mm}.npy'    
+    if datadir.endswith('npy'):
+        filename = datadir
+    elif datadir.endswith('.fits'):
+        filename = datadir
+    else:
+        # Construct the filename for the input low-resolution image
+        filename = f'{datadir}/POLISH_valid_LR_bicubic/X2/{mm.zfill(4)}x2.npy'
+        filename_hr = f'{datadir}/POLISH_valid_HR/{mm.zfill(4)}.npy'
+        
     print(f'Reconstructing {filename}')
-
+        
+    
     log = False
     # Perform super-resolution
     if psf_path is None:
-        sr_image = super_resolve(model, filename, device, log=log)
+        sr_image, lr_image = super_resolve(model, filename, device, log=log)
     else:
-        sr_image = super_resolve(model, filename, device, psf=psfarr)
+        sr_image, lr_image = super_resolve(model, filename, device, psf=psfarr)
         
     sr_image = np.array(sr_image)
 
@@ -90,8 +97,11 @@ def main():
     print(f'Super-resolved image shape: {sr_image.shape}')
 
     # Load the low-resolution image
-    lr_image = np.load(filename)
-    hr_image = np.load(filename_hr)
+#    lr_image = np.load(filename)
+    try:
+        hr_image = np.load(filename_hr)
+    except:
+        hr_image = None
     
     # Plot the low-resolution and super-resolved images side by side
     plot_images(lr_image, sr_image, hr_image)

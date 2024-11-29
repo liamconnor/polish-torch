@@ -15,6 +15,10 @@ tensorboard = "^2.17.0"
 scipy = "^1.14.0"
 scikit-image = "^0.24.0"
 astropy = "^6.1.2"
+ipython = "^8.29.0"
+jupyter = "^1.1.1"
+jupyterlab = "^4.3.1"
+sep = "^1.2.1"
 
 
 [build-system]
