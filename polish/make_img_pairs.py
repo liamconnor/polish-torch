@@ -146,10 +146,9 @@ def convolvehr(data, kernel, plotit=False,
             data = data.reshape(data.shape[0]//4,4,
                                 data.shape[-2]//4, 4, 
                                 ncolor).mean(1).mean(-2)
-            plt.imshow(dataLR[..., 0]**0.5, cmap=cmap, 
-                        vmax=dataLR[..., 0].max()**0.5*0.010, vmin=0)
+            plt.imshow(abs(dataLR[..., 0])**0.5, cmap=cmap,)
         else:
-            plt.imshow(dataLR, vmax=dataLR[..., 0].max()*0.0010, cmap=cmap)
+            plt.imshow(np.sqrt(np.abs(dataLR)), cmap=cmap)
         plt.title('Convolved', fontsize=15)
         plt.figure()
 
@@ -327,10 +326,6 @@ def create_LR_image(fl, kernel, fdirout=None,
         nhr = len(data)
         # Select inner square with side length 1/2
         
-#        data = data[int(0.25*nhr) : int(0.75*nhr), int(0.25*nhr) : int(0.75*nhr)]
-#        nlr = len(dataLR)
-#        dataLR = dataLR[int(0.25*nlr) : int(0.75*nlr), int(0.25*nlr) : int(0.75*nlr)]
-
         data = normalize_data(data, nbit=nbit)
         dataLR = normalize_data(dataLR, nbit=nbit)
         
