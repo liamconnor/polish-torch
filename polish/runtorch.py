@@ -12,14 +12,6 @@ import numpy as np
 import torchvision.transforms.functional as TF
 import torch.nn.functional as F
 
-from torch.optim.lr_scheduler import (
-        StepLR,
-        ExponentialLR,
-        CosineAnnealingLR,
-        LambdaLR,
-        ReduceLROnPlateau
-    )
-
 import matplotlib.pylab as plt
 
 # WDSR model definition
@@ -299,8 +291,9 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
     num_epochs = 2500
     batch_size = 32
     learning_rate = 0.0001
+    start_epoch = 0  # Initialize start epoch
     
-    # Create model
+    # Create model and load previous state if exists
     if psf:
         model = WDSRpsf(scale_factor=scale).to(device)
         psfarr = np.load('./data/exampleLWA1024x2/psf/psf_ideal.npy')
@@ -312,9 +305,22 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
         model = WDSRmchan(in_channels=1, out_channels=1, scale_factor=scale).to(device)
         psfarr = None
 
-    
-    if model_name != None:
-        model.load_state_dict(torch.load(model_name))
+    # Load previous checkpoint if it exists
+    if model_name is not None:
+        checkpoint = torch.load(model_name)
+        if isinstance(checkpoint, dict) and 'epoch' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            best_val_psnr = checkpoint.get('best_val_psnr', 0.0)
+        else:
+            # Handle old-style checkpoints that only contained model state
+            model.load_state_dict(checkpoint)
+            best_val_loss = float('inf')
+            best_val_psnr = 0.0
+    else:
+        best_val_loss = float('inf')
+        best_val_psnr = 0.0
     
     # Loss function and optimizer
     criterion = nn.L1Loss()
@@ -335,26 +341,35 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
         break
     
     # Training loop
-    best_val_loss = float('inf')
-    best_val_psnr = 0.0
-    
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         train_loss = train(model, train_loader, criterion, optimizer, device, psf=psfarr)
         val_loss, val_psnr = validate_with_psnr(model, val_loader, criterion, device, psf=psfarr)
         
         print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, Val PSNR: {val_psnr:.2f}")
 
-        # Save the best model
+        # Save checkpoints with epoch information
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'val_psnr': val_psnr,
+            'best_val_loss': best_val_loss,
+            'best_val_psnr': best_val_psnr
+        }
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), 'runs/%s.pth' % datadir.strip('/').split('/')[-1])
+            torch.save(checkpoint, f'runs/{datadir.strip("/").split("/")[-1]}.pth')
 
         if val_psnr > best_val_psnr:
             best_val_psnr = val_psnr
-            torch.save(model.state_dict(), 'runs/%s_PSNR.pth' % datadir.strip('/').split('/')[-1])
+            torch.save(checkpoint, f'runs/{datadir.strip("/").split("/")[-1]}_PSNR.pth')
             
     # Save the final model
-    torch.save(model.state_dict(), 'runs/final_%s.pth' % datadir.strip('/').split('/')[-1])
+    checkpoint['epoch'] = num_epochs - 1
+    torch.save(checkpoint, f'runs/final_{datadir.strip("/").split("/")[-1]}.pth')
 
 # Modified validation function to include PSNR calculation
 def validate_with_psnr(model, val_loader, criterion, device, psf=None):
@@ -386,7 +401,8 @@ if __name__=='__main__':
         model_name = sys.argv[3]
     except:
         model_name = None
-    main(sys.argv[1], int(sys.argv[2]), model_name=model_name, ntrain=800, nvalid=100)
+    main(sys.argv[1], int(sys.argv[2]), model_name=model_name, 
+         ntrain=800, nvalid=100)
 
 # Inference function (for using the trained model)
 def super_resolve(model, lr_image_path, device, psf=None, log=False):
