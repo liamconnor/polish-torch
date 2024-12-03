@@ -284,7 +284,7 @@ def calculate_psnr(img1, img2):
     return psnr
 
 # Main execution
-def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
+def main(datadir, scale=2, psf=False, ntrain=800, nvalid=100):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Hyperparameters
@@ -293,6 +293,8 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
     learning_rate = 0.0001
     start_epoch = 0  # Initialize start epoch
     
+    model_name = f'runs/{datadir.strip("/").split("/")[-1]}_PSNR.pth'
+
     # Create model and load previous state if exists
     if psf:
         model = WDSRpsf(scale_factor=scale).to(device)
@@ -396,14 +398,6 @@ def validate_with_psnr(model, val_loader, criterion, device, psf=None):
     avg_psnr = total_psnr / (len(val_loader) * val_loader.batch_size)
     return avg_loss, avg_psnr
 
-if __name__=='__main__':
-    try:
-        model_name = sys.argv[3]
-    except:
-        model_name = None
-    main(sys.argv[1], int(sys.argv[2]), model_name=model_name, 
-         ntrain=800, nvalid=100)
-
 # Inference function (for using the trained model)
 def super_resolve(model, lr_image_path, device, psf=None, log=False):
     model.eval()
@@ -437,8 +431,6 @@ def super_resolve(model, lr_image_path, device, psf=None, log=False):
     sr_image = (sr_image * 65535.0).clip(0, 65535).astype(np.uint16)
     return Image.fromarray(sr_image), lr_image.squeeze().cpu().numpy()
 
-# Example usage of inference
-# model = WDSR().to(device)
-# model.load_state_dict(torch.load('wdsr_model.pth'))
-# sr_image = super_resolve(model, 'path/to/test/lr_image.png', device)
-# sr_image.save('super_resolved_image.png')
+if __name__=='__main__':
+    main(sys.argv[1], int(sys.argv[2]),  
+         ntrain=800, nvalid=100)
