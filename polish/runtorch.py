@@ -1,5 +1,6 @@
 import sys
 
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -54,12 +55,59 @@ class WDSR(nn.Module):
         x = self.conv_last(x)
         return x
 
+class WDSRmchan(nn.Module):
+    def __init__(self, in_channels=1, out_channels=1, num_residual_blocks=32, num_features=32, scale_factor=2):
+        super(WDSRmchan, self).__init__()
+        self.scale_factor = scale_factor
+
+        # Initial convolution
+        self.conv_first = nn.Conv2d(in_channels, num_features, kernel_size=3, padding=1)
+
+        # Residual blocks
+        self.residual_blocks = nn.ModuleList([
+            WDSRBlock(num_features) for _ in range(num_residual_blocks)
+        ])
+
+        # Upsampling
+        self.upsample = nn.Sequential(
+            nn.Conv2d(num_features, num_features * (scale_factor ** 2), kernel_size=3, padding=1),
+            nn.PixelShuffle(scale_factor)
+        )
+
+        # Final convolution
+        self.conv_last = nn.Conv2d(num_features, out_channels, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        x = self.conv_first(x)
+        residual = x
+        for block in self.residual_blocks:
+            x = block(x)
+        x += residual
+        x = self.upsample(x)
+        x = self.conv_last(x)
+        return x
+
 class WDSRBlock(nn.Module):
     def __init__(self, num_features):  # Use double underscores for __init__
         super(WDSRBlock, self).__init__()  # Use double underscores for __init__
         self.conv1 = nn.Conv2d(num_features, num_features * 4, stride=1, kernel_size=3, padding=1)
         self.act = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(num_features * 4, num_features, stride=1, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        residual = x
+        x = self.conv1(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        x += residual
+        return x
+
+class WDSRBlock(nn.Module):
+    def __init__(self, num_features):
+        super(WDSRBlock, self).__init__()
+        self.conv1 = nn.Conv2d(num_features, num_features * 4, kernel_size=3, padding=1)
+        self.act = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(num_features * 4, num_features, kernel_size=3, padding=1)
 
     def forward(self, x):
         residual = x
@@ -141,14 +189,15 @@ class WDSRBlockpsf(nn.Module):
         return x
 
 class SuperResolutionDataset(Dataset):
-    def __init__(self, hr_dir, lr_dir, start_num, end_num,
-                 crop_size=96, transform=None, scale_factor=2):
+    def __init__(self, hr_dir, lr_dir, start_num, end_num, 
+                 crop_size=96, transform=None, scale_factor=2, in_channels=1):
         self.hr_dir = hr_dir
         self.lr_dir = lr_dir
         self.transform = transform
         self.image_files = [f"{i:04d}.npy" for i in range(start_num, end_num + 1)]
         self.crop_size = crop_size
         self.scale_factor = scale_factor
+        self.in_channels = in_channels
 
     def __len__(self):
         return len(self.image_files)
@@ -177,6 +226,10 @@ class SuperResolutionDataset(Dataset):
         # Convert to tensor
         hr_image = torch.from_numpy(hr_image).unsqueeze(0)
         lr_image = torch.from_numpy(lr_image).unsqueeze(0)
+
+        # Add channel dimension and repeat to create 3 channels
+        hr_image = hr_image.repeat(self.in_channels, 1, 1)  # Shape: [3, H, W]
+        lr_image = lr_image.repeat(self.in_channels, 1, 1)  # Shape: [3, H, W]
         
         if self.transform:
             hr_image = self.transform(hr_image)
@@ -244,7 +297,7 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
     
     # Hyperparameters
     num_epochs = 2500
-    batch_size = 4
+    batch_size = 32
     learning_rate = 0.0001
     
     # Create model
@@ -256,7 +309,7 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
         psfarr = psfarr[None,None] * np.ones([batch_size,1,1,1])
         psfarr = torch.from_numpy(psfarr).to(device).float()
     else:
-        model = WDSR(scale_factor=scale).to(device)
+        model = WDSRmchan(in_channels=1, out_channels=1, scale_factor=scale).to(device)
         psfarr = None
 
     
@@ -270,11 +323,16 @@ def main(datadir, scale=2, model_name=None, psf=False, ntrain=800, nvalid=100):
     #step_scheduler = StepLR(optimizer, step_size=250, gamma=0.1)  # Decays by 0.1 every 30 epochs
     
     # Load datasets
-    train_dataset = SuperResolutionDataset('./%s/POLISH_train_HR/' % datadir, './%s/POLISH_train_LR_bicubic/X%d/' % (datadir,scale), 0, ntrain-1, scale_factor=scale)
-    val_dataset = SuperResolutionDataset('./%s/POLISH_valid_HR/' % datadir, './%s/POLISH_valid_LR_bicubic/X%d/' % (datadir, scale), ntrain, ntrain+nvalid-1, scale_factor=scale)
-    
+    train_dataset = SuperResolutionDataset('./%s/POLISH_train_HR/' % datadir, './%s/POLISH_train_LR_bicubic/X%d/' % (datadir,scale), 0, ntrain-1, scale_factor=scale, in_channels=1)
+    val_dataset = SuperResolutionDataset('./%s/POLISH_valid_HR/' % datadir, './%s/POLISH_valid_LR_bicubic/X%d/' % (datadir, scale), ntrain, ntrain+nvalid-1, scale_factor=scale, in_channels=1)
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    for lr_imgs, hr_imgs in train_loader:
+        print(lr_imgs.shape)  # Expected: [batch_size, 3, H, W]
+        print(hr_imgs.shape)  # Expected: [batch_size, 3, H, W]
+        break
     
     # Training loop
     best_val_loss = float('inf')
@@ -328,7 +386,7 @@ if __name__=='__main__':
         model_name = sys.argv[3]
     except:
         model_name = None
-    main(sys.argv[1], int(sys.argv[2]), model_name=model_name)
+    main(sys.argv[1], int(sys.argv[2]), model_name=model_name, ntrain=800, nvalid=100)
 
 # Inference function (for using the trained model)
 def super_resolve(model, lr_image_path, device, psf=None, log=False):
@@ -340,21 +398,28 @@ def super_resolve(model, lr_image_path, device, psf=None, log=False):
         lr_image = torch.from_numpy(lr_image).unsqueeze(0).unsqueeze(0).to(device)
     elif lr_image_path.endswith('.npy'):
         lr_image = np.load(lr_image_path)[:,:,0].astype(np.float32)
+#        print("hack")
+#        lr_image = lr_image[len(lr_image)//2 - 1500:len(lr_image)//2 + 1500, len(lr_image)//2 - 1500:len(lr_image)//2 + 1500]
+        lr_image = lr_image - lr_image.min()
+        lr_image = lr_image / lr_image.max()
         lr_image = torch.from_numpy(lr_image).unsqueeze(0).unsqueeze(0).to(device)
 
     if log==True:
         lr_image = torch.log(lr_image+1e-32)
-        
+
+    
     with torch.no_grad():
         if psf is None:
+            t0 = time.time()
             sr_image = model(lr_image)
+            print(time.time() - t0)
         else:
             print(lr_image.shape, psf.shape)
             sr_image = model(lr_image, psf)
     
     sr_image = sr_image.squeeze().cpu().numpy()
     sr_image = (sr_image * 65535.0).clip(0, 65535).astype(np.uint16)
-    return Image.fromarray(sr_image)
+    return Image.fromarray(sr_image), lr_image.squeeze().cpu().numpy()
 
 # Example usage of inference
 # model = WDSR().to(device)
